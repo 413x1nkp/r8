@@ -1,6 +1,6 @@
 # Windows build
 
 - STATUS: OPEN
-- PRIORITY: 100
+- PRIORITY: 50
 
 No description.
