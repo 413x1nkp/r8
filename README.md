@@ -5,7 +5,8 @@ Fantasy console based on 6502 and rendered using Raylib
 ## Quick Start
 
 ```console
-$ make
+$ cc -o nob nob.c
+$ ./nob
 $ ./r8 checker.rom
 ```
 
