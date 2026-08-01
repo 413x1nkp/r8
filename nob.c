@@ -2,12 +2,15 @@
 #include "nob.h"
 
 #define BUILD_FOLDER "build/"
+#define SRC_FOLDER "src/"
+#define EXAMPLES_FOLDER "examples/"
 
 int main(int argc, char **argv)
 {
     NOB_GO_REBUILD_URSELF(argc, argv);
 
     if (!mkdir_if_not_exists(BUILD_FOLDER)) return 1;
+    if (!mkdir_if_not_exists(BUILD_FOLDER EXAMPLES_FOLDER)) return 1;
 
     Cmd cmd = {0};
     cmd_append(&cmd, "cc");
@@ -15,23 +18,24 @@ int main(int argc, char **argv)
     cmd_append(&cmd, "-Wextra");
     cmd_append(&cmd, "-ggdb");
     cmd_append(&cmd, "-c");
-    cmd_append(&cmd, "fake6502.c");
+    cmd_append(&cmd, SRC_FOLDER"fake6502.c");
     cmd_append(&cmd, "-o", BUILD_FOLDER"fake6502.o");
     if (!cmd_run(&cmd)) return 1;
 
     cmd_append(&cmd, "./vasm6502_oldstyle/linux/vasm6502_oldstyle");
-    cmd_append(&cmd, "checker.asm");
+    cmd_append(&cmd, EXAMPLES_FOLDER"checker.asm");
     cmd_append(&cmd, "-Fbin");
-    cmd_append(&cmd, "-o", BUILD_FOLDER"checker.rom");
+    cmd_append(&cmd, "-o", BUILD_FOLDER EXAMPLES_FOLDER"checker.rom");
     if (!cmd_run(&cmd)) return 1;
 
     cmd_append(&cmd, "cc");
     cmd_append(&cmd, "-I./raylib-6.0_linux_amd64/include");
+    cmd_append(&cmd, "-I.");
     cmd_append(&cmd, "-Wall");
     cmd_append(&cmd, "-Wextra");
     cmd_append(&cmd, "-ggdb");
     cmd_append(&cmd, "-o", BUILD_FOLDER"r8");
-    cmd_append(&cmd, "r8.c");
+    cmd_append(&cmd, SRC_FOLDER"r8.c");
     cmd_append(&cmd, BUILD_FOLDER"fake6502.o");
     cmd_append(&cmd, "-L./raylib-6.0_linux_amd64/lib/");
     cmd_append(&cmd, "-l:libraylib.a");
