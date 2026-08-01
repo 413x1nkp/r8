@@ -7,7 +7,7 @@ Fantasy console based on 6502 and rendered using Raylib
 ```console
 $ cc -o nob nob.c
 $ ./nob
-$ ./r8 checker.rom
+$ ./build/r8 ./build/checker.rom
 ```
 
 ## Special Thanks
