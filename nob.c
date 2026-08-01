@@ -9,6 +9,20 @@ int main(int argc, char **argv)
 {
     NOB_GO_REBUILD_URSELF(argc, argv);
 
+    const char *program_name = shift(argv, argc);
+
+    bool run = false;
+
+    while (argc > 0) {
+        const char *flag = shift(argv, argc);
+        if (strcmp(flag, "-run") == 0) {
+            run = true;
+        } else {
+            fprintf(stderr, "ERROR: unknown flag \"%s\"\n", flag);
+            return 1;
+        }
+    }
+
     if (!mkdir_if_not_exists(BUILD_FOLDER)) return 1;
     if (!mkdir_if_not_exists(BUILD_FOLDER EXAMPLES_FOLDER)) return 1;
 
@@ -42,6 +56,11 @@ int main(int argc, char **argv)
     cmd_append(&cmd, "-lm");
     cmd_append(&cmd, "-lX11");
     if (!cmd_run(&cmd)) return 1;
+
+    if (run) {
+        cmd_append(&cmd, BUILD_FOLDER"r8", BUILD_FOLDER EXAMPLES_FOLDER "checker.rom");
+        if (!cmd_run(&cmd)) return 1;
+    }
 
     return 0;
 }
