@@ -4,6 +4,10 @@
 #define BUILD_FOLDER "build/"
 #define SRC_FOLDER "src/"
 #define EXAMPLES_FOLDER "examples/"
+#define TARGET_NAME "linux_amd64"
+#define RAYLIB_SRC_FOLDER "raylib-6.0/src/"
+
+bool build_raylib(void);
 
 int main(int argc, char **argv)
 {
@@ -26,6 +30,8 @@ int main(int argc, char **argv)
     if (!mkdir_if_not_exists(BUILD_FOLDER)) return 1;
     if (!mkdir_if_not_exists(BUILD_FOLDER EXAMPLES_FOLDER)) return 1;
 
+    if (!build_raylib()) return 1;
+
     Cmd cmd = {0};
     cmd_append(&cmd, "cc");
     cmd_append(&cmd, "-Wall");
@@ -43,7 +49,7 @@ int main(int argc, char **argv)
     if (!cmd_run(&cmd)) return 1;
 
     cmd_append(&cmd, "cc");
-    cmd_append(&cmd, "-I./raylib-6.0_linux_amd64/include");
+    cmd_append(&cmd, "-I./raylib-6.0/src/");
     cmd_append(&cmd, "-I.");
     cmd_append(&cmd, "-Wall");
     cmd_append(&cmd, "-Wextra");
@@ -51,7 +57,7 @@ int main(int argc, char **argv)
     cmd_append(&cmd, "-o", BUILD_FOLDER"r8");
     cmd_append(&cmd, SRC_FOLDER"r8.c");
     cmd_append(&cmd, BUILD_FOLDER"fake6502.o");
-    cmd_append(&cmd, "-L./raylib-6.0_linux_amd64/lib/");
+    cmd_append(&cmd, "-L./"BUILD_FOLDER"raylib_"TARGET_NAME"/");
     cmd_append(&cmd, "-l:libraylib.a");
     cmd_append(&cmd, "-lm");
     cmd_append(&cmd, "-lX11");
@@ -63,4 +69,66 @@ int main(int argc, char **argv)
     }
 
     return 0;
+}
+
+static const char *raylib_modules[] = {
+    "rcore",
+    "raudio",
+    "rglfw",
+    "rmodels",
+    "rshapes",
+    "rtext",
+    "rtextures",
+};
+
+bool build_raylib(void)
+{
+    bool result = true;
+    Cmd cmd = {0};
+    File_Paths object_files = {0};
+
+    if (!mkdir_if_not_exists(BUILD_FOLDER "raylib")) {
+        return_defer(false);
+    }
+
+    Procs procs = {0};
+
+    const char *build_path = BUILD_FOLDER "raylib_" TARGET_NAME;
+
+    if (!mkdir_if_not_exists(build_path)) {
+        return_defer(false);
+    }
+
+    for (size_t i = 0; i < ARRAY_LEN(raylib_modules); ++i) {
+        const char *input_path = temp_sprintf(RAYLIB_SRC_FOLDER"%s.c", raylib_modules[i]);
+        const char *output_path = temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
+        output_path = temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
+
+        da_append(&object_files, output_path);
+
+        if (needs_rebuild(output_path, &input_path, 1)) {
+            cmd_append(&cmd, "cc",
+                "-ggdb", "-DPLATFORM_DESKTOP", "-D_GLFW_X11", "-fPIC", "-DSUPPORT_FILEFORMAT_FLAC=1",
+                "-I"RAYLIB_SRC_FOLDER"external/glfw/include",
+                "-c", input_path,
+                "-o", output_path);
+            if (!cmd_run(&cmd, .async = &procs)) return_defer(false);
+        }
+    }
+
+    if (!procs_flush(&procs)) return_defer(false);
+
+    const char *libraylib_path = temp_sprintf("%s/libraylib.a", build_path);
+    delete_file(libraylib_path);
+    cmd_append(&cmd, "ar", "-crs", libraylib_path);
+    for (size_t i = 0; i < ARRAY_LEN(raylib_modules); ++i) {
+        const char *input_path = temp_sprintf("%s/%s.o", build_path, raylib_modules[i]);
+        cmd_append(&cmd, input_path);
+    }
+    if (!cmd_run(&cmd)) return_defer(false);
+
+defer:
+    cmd_free(cmd);
+    da_free(object_files);
+    return result;
 }

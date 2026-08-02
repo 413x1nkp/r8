@@ -1,0 +1,4 @@
+Original Raylib 6.0 Source Code downloaded from https://github.com/raysan5/raylib/releases/tag/6.0
+Stripped off everything except `./LICENSE` and `./src/`.
+
+- rexim
