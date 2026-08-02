@@ -10,13 +10,7 @@
 #define UI_FPS 60 // The FPS the UI is running at
 #define EMU_FPS 5 // The FPS the 6502 emulator is running at
 #define EMU_DELTA_TIME (1.0/EMU_FPS)
-#define VECTOR_EXIT   0x6969
-#define ENTRY_POINT   0x8000
-#define UPDATE_VECTOR 0xFFFE
-#define CANVAS        0x1000
-#define CANVAS_WIDTH  64
-#define CANVAS_HEIGHT 64
-#define KEYBOARD      (CANVAS + CANVAS_WIDTH*CANVAS_HEIGHT)
+#include "layout.h"
 #define MAX_VECTOR_STEPS (100*1000)
 
 // 0x1000 .. 0x2000
