@@ -87,10 +87,6 @@ bool build_raylib(void)
     Cmd cmd = {0};
     File_Paths object_files = {0};
 
-    if (!mkdir_if_not_exists(BUILD_FOLDER "raylib")) {
-        return_defer(false);
-    }
-
     Procs procs = {0};
 
     const char *build_path = BUILD_FOLDER "raylib_" TARGET_NAME;
