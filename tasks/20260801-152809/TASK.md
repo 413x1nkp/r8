@@ -4,4 +4,5 @@
 - PRIORITY: 50
 - TAGS: stream
 
-No description.
+This look like a very big feature that may even spawn its own tag. We
+need a small scoped goal for this task to be closed.
