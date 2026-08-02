@@ -53,6 +53,7 @@ int main(int argc, char **argv)
 
     const char *rom_path = shift(argv, argc);
 
+    SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
     InitWindow(800, 600, "r8");
     SetTargetFPS(5);
 
@@ -78,6 +79,7 @@ int main(int argc, char **argv)
         .mipmaps = 1,
         .format  = PIXELFORMAT_UNCOMPRESSED_GRAYSCALE,
     });
+    SetTextureWrap(canvas, TEXTURE_WRAP_CLAMP);
 
     while (!WindowShouldClose()) {
         irq6502();
@@ -87,10 +89,24 @@ int main(int argc, char **argv)
 
         UpdateTexture(canvas, MEMORY + CANVAS);
 
-        BeginDrawing();
-        ClearBackground(GetColor(0x181818FF));
-        DrawTextureEx(canvas, Vector2Zero(), 0, 10, WHITE);
-        EndDrawing();
+        float w  = GetScreenWidth();
+        float h  = GetScreenHeight();
+
+        Camera2D camera = {0};
+        camera.offset = (Vector2){w*0.5, h*0.5};
+        if (w < h) {
+            camera.zoom = w/canvas.width;
+        } else {
+            camera.zoom = h/canvas.height;
+        }
+
+        BeginDrawing(); {
+            ClearBackground(GetColor(0x181818FF));
+            BeginMode2D(camera); {
+                Vector2 position = {-canvas.width*0.5, -canvas.height*0.5};
+                DrawTextureEx(canvas, position, 0, 1, WHITE);
+            } EndMode2D();
+        } EndDrawing();
     }
 
     CloseWindow();
