@@ -14,6 +14,7 @@
 bool build_raylib(void);
 bool generate_no_rom_asm(const char *output_asm_path);
 bool rom_to_c(const char *input_path, const char *output_path);
+bool build_rom_with_vasm(Cmd *cmd, const char *input_path, const char *output_path);
 
 int main(int argc, char **argv)
 {
@@ -52,27 +53,12 @@ int main(int argc, char **argv)
     cmd_append(&cmd, "-o", BUILD_FOLDER"fake6502.o");
     if (!cmd_run(&cmd)) return 1;
 
-    if (!generate_no_rom_asm(BUILD_FOLDER "no_rom.asm")) return 1;
+    if (!generate_no_rom_asm(BUILD_FOLDER"no_rom.asm")) return 1;
+    if (!build_rom_with_vasm(&cmd, BUILD_FOLDER"no_rom.asm", BUILD_FOLDER"no_rom.rom")) return 1;
+    if (!rom_to_c(BUILD_FOLDER"no_rom.rom", BUILD_FOLDER"no_rom.c")) return 1;
 
-    cmd_append(&cmd, "./vasm6502_oldstyle/linux/vasm6502_oldstyle");
-    cmd_append(&cmd, BUILD_FOLDER "no_rom.asm");
-    cmd_append(&cmd, "-Fbin");
-    cmd_append(&cmd, "-o", BUILD_FOLDER "no_rom.rom");
-    if (!cmd_run(&cmd)) return 1;
-
-    if (!rom_to_c(BUILD_FOLDER "no_rom.rom", BUILD_FOLDER "no_rom.c")) return 1;
-
-    cmd_append(&cmd, "./vasm6502_oldstyle/linux/vasm6502_oldstyle");
-    cmd_append(&cmd, EXAMPLES_FOLDER"checker.asm");
-    cmd_append(&cmd, "-Fbin");
-    cmd_append(&cmd, "-o", BUILD_FOLDER EXAMPLES_FOLDER"checker.rom");
-    if (!cmd_run(&cmd)) return 1;
-
-    cmd_append(&cmd, "./vasm6502_oldstyle/linux/vasm6502_oldstyle");
-    cmd_append(&cmd, EXAMPLES_FOLDER"box.asm");
-    cmd_append(&cmd, "-Fbin");
-    cmd_append(&cmd, "-o", BUILD_FOLDER EXAMPLES_FOLDER"box.rom");
-    if (!cmd_run(&cmd)) return 1;
+    if (!build_rom_with_vasm(&cmd, EXAMPLES_FOLDER"checker.asm", BUILD_FOLDER EXAMPLES_FOLDER"checker.rom")) return 1;
+    if (!build_rom_with_vasm(&cmd, EXAMPLES_FOLDER"box.asm", BUILD_FOLDER EXAMPLES_FOLDER"box.rom")) return 1;
 
     cmd_append(&cmd, "cc");
     cmd_append(&cmd, "-I./raylib-6.0/src/");
@@ -216,4 +202,13 @@ bool rom_to_c(const char *input_path, const char *output_path)
     if (!write_entire_file(output_path, out.items, out.count)) return false;
     nob_log(INFO, "generated %s", output_path);
     return true;
+}
+
+bool build_rom_with_vasm(Cmd *cmd, const char *input_path, const char *output_path)
+{
+    cmd_append(cmd, "./vasm6502_oldstyle/linux/vasm6502_oldstyle");
+    cmd_append(cmd, input_path);
+    cmd_append(cmd, "-Fbin");
+    cmd_append(cmd, "-o", output_path);
+    return cmd_run(cmd);
 }
