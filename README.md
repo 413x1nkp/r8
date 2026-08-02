@@ -1,8 +1,10 @@
 # r8
 
-Fantasy console based on 6502 and rendered using Raylib
+Fantasy console based on 6502 and rendered using Raylib.
 
 ![screenshot](./screenshot.png)
+
+Mostly inspired by things like [Uxn](https://100r.co/site/uxn.html) but uses [6502](https://en.wikipedia.org/wiki/MOS_Technology_6502) as the underlying base VM. The environment your ROMs are running in is completely made up and doesn't correspond to any real hardware that ever existed (hense the "fantasy" part).
 
 ## Quick Start
 
