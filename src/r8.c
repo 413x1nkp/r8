@@ -6,6 +6,9 @@
 #include "raylib.h"
 #include "raymath.h"
 
+#define UI_FPS 60 // The FPS the UI is running at
+#define EMU_FPS 5 // The FPS the 6502 emulator is running at
+#define EMU_DELTA_TIME (1.0/EMU_FPS)
 #define ENTRY_POINT   0x8000
 #define CANVAS        0x1000
 #define CANVAS_WIDTH  64
@@ -55,7 +58,7 @@ int main(int argc, char **argv)
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
     InitWindow(800, 600, "r8");
-    SetTargetFPS(5);
+    SetTargetFPS(UI_FPS);
 
     String_Builder rom = {0};
     if (!read_entire_file(rom_path, &rom)) return 1;
@@ -81,10 +84,16 @@ int main(int argc, char **argv)
     });
     SetTextureWrap(canvas, TEXTURE_WRAP_CLAMP);
 
+    float global_timer = 0;
     while (!WindowShouldClose()) {
-        irq6502();
-        while (status&FLAG_INTERRUPT) {
-            step6502();
+        float a = fmodf(global_timer, EMU_DELTA_TIME);
+        global_timer += GetFrameTime();
+        float b = fmodf(global_timer, EMU_DELTA_TIME);
+        if (b < a) {
+            irq6502();
+            while (status&FLAG_INTERRUPT) {
+                step6502();
+            }
         }
 
         UpdateTexture(canvas, MEMORY + CANVAS);
