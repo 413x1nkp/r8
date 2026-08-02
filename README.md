@@ -16,6 +16,14 @@ $ ./build/r8 ./build/examples/checker.rom
 
 We have only tested on Linux so far. But [Windows](./tasks/20260801-113453/TASK.md) and [MacOS](./tasks/20260801-113457/TASK.md) supports are coming eventually.
 
+## Controls
+
+| Key               | Desciption             |
+|-------------------|------------------------|
+| <kbd>Ctrl+R</kbd> | Reload the current ROM |
+
+You can Drag&Drop ROM files onto the window.
+
 ## ROM specs
 
 ROMs are just binary files consisted of 6502 machine code instructions. Produce them with whatever assembler your heart desire (even manually if you feel spicy). We supply some binaries of [vasm](./vasm6502_oldstyle/) that we stole from [http://www.compilers.de/vasm.html](http://www.compilers.de/vasm.html). You can use them as a starting point. Check out [examples](./examples/) for some ROM assemblies.

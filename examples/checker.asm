@@ -55,7 +55,7 @@ init:
   jmp .rows
 .rows_over:
 
-  jmp $6969
+  rts
 
 update:
   ;;rti
@@ -95,4 +95,4 @@ update:
   jmp .rows
 .rows_over:
 
-  rti
+  rts
