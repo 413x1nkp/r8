@@ -5,7 +5,6 @@ KEYBOARD      = $2000
 LINE          = $00
 BOX_X         = $02
 BOX_Y         = $03
-KEYBOARD_PTR  = $04
 
     org $8000
 init:
@@ -18,39 +17,30 @@ init:
     sta BOX_X
     sta BOX_Y
 
-    lda #<KEYBOARD
-    sta KEYBOARD_PTR,
-    lda #>KEYBOARD
-    sta KEYBOARD_PTR+1
-
     rts
 
 update:
 
     ldy #68
-    lda (KEYBOARD_PTR), Y
-    cmp #00
+    lda KEYBOARD, Y
     beq .skip_right
     inc BOX_X
 .skip_right:
 
     ldy #65
-    lda (KEYBOARD_PTR), Y
-    cmp #00
+    lda KEYBOARD, Y
     beq .skip_left
     dec BOX_X
 .skip_left:
 
     ldy #87
-    lda (KEYBOARD_PTR), Y
-    cmp #00
+    lda KEYBOARD, Y
     beq .skip_up
     dec BOX_Y
 .skip_up:
 
     ldy #83
-    lda (KEYBOARD_PTR), Y
-    cmp #00
+    lda KEYBOARD, Y
     beq .skip_down
     inc BOX_Y
 .skip_down:
