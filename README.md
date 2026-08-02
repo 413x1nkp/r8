@@ -2,6 +2,8 @@
 
 Fantasy console based on 6502 and rendered using Raylib
 
+![screenshot](./screenshot.png)
+
 ## Quick Start
 
 ```console
