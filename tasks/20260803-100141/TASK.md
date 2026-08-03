@@ -1,0 +1,9 @@
+# ROM versioning mechanism
+
+- STATUS: OPEN
+- PRIORITY: 100
+- TAGS: stream
+
+https://discord.com/channels/542264318465671168/1533769511029964892/1533775737687900191
+
+![2026-08-03-170155_1019x179_scrot.jpg](./2026-08-03-170155_1019x179_scrot.jpg)
