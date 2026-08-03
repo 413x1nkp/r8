@@ -1,0 +1,8 @@
+# Change ROM load address
+
+- STATUS: OPEN
+- PRIORITY: 100
+
+https://discord.com/channels/542264318465671168/1533769511029964892/1533781296713699369
+
+![2026-08-03-173052_526x153_scrot.jpg](./2026-08-03-173052_526x153_scrot.jpg)
