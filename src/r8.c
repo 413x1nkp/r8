@@ -11,7 +11,7 @@
 #define EMU_FPS 5 // The FPS the 6502 emulator is running at
 #define EMU_DELTA_TIME (1.0/EMU_FPS)
 #include "layout.h"
-#define MAX_VECTOR_STEPS (100*1000)
+#define MAX_VECTOR_STEPS (10*1000*1000)
 
 // 0x1000 .. 0x2000
 
