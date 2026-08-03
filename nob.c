@@ -1,15 +1,16 @@
 #define NOB_IMPLEMENTATION
-#include "nob.h"
+#include "thirdparty/nob.h"
 #define FLAG_IMPLEMENTATION
-#include "flag.h"
+#include "thirdparty/flag.h"
 #define OLIVEC_IMPLEMENTATION
-#include "olive.c"
+#include "thirdparty/olive.c"
 
 #define BUILD_FOLDER "build/"
 #define SRC_FOLDER "src/"
 #define EXAMPLES_FOLDER "examples/"
+#define THIRDPARTY_FOLDER "thirdparty/"
 #define TARGET_NAME "linux_amd64"
-#define RAYLIB_SRC_FOLDER "raylib-6.0/src/"
+#define RAYLIB_SRC_FOLDER THIRDPARTY_FOLDER "raylib-6.0/src/"
 
 #include "./src/layout.h"
 
@@ -63,16 +64,16 @@ int main(int argc, char **argv)
     if (!build_rom_with_vasm(&cmd, EXAMPLES_FOLDER"box.asm", BUILD_FOLDER EXAMPLES_FOLDER"box.rom")) return 1;
 
     cmd_append(&cmd, "cc");
-    cmd_append(&cmd, "-I./raylib-6.0/src/");
-    cmd_append(&cmd, "-I.");
     cmd_append(&cmd, "-I"BUILD_FOLDER);
+    cmd_append(&cmd, "-I"RAYLIB_SRC_FOLDER);
+    cmd_append(&cmd, "-I"THIRDPARTY_FOLDER);
     cmd_append(&cmd, "-Wall");
     cmd_append(&cmd, "-Wextra");
     cmd_append(&cmd, "-ggdb");
     cmd_append(&cmd, "-o", BUILD_FOLDER"r8");
     cmd_append(&cmd, SRC_FOLDER"r8.c");
     cmd_append(&cmd, BUILD_FOLDER"fake6502.o");
-    cmd_append(&cmd, "-L./"BUILD_FOLDER"raylib_"TARGET_NAME"/");
+    cmd_append(&cmd, "-L"BUILD_FOLDER"raylib_"TARGET_NAME"/");
     cmd_append(&cmd, "-l:libraylib.a");
     cmd_append(&cmd, "-lm");
     cmd_append(&cmd, "-lX11");
