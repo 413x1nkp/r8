@@ -1,3 +1,4 @@
+FPS_CONFIG    = $FFFD
 CANVAS        = $1000
 CANVAS_WIDTH  = 64
 CANVAS_HEIGHT = 64
@@ -16,6 +17,9 @@ init:
     lda #$05
     sta BOX_X
     sta BOX_Y
+
+    lda #30
+    sta FPS_CONFIG
 
     rts
 
