@@ -103,6 +103,10 @@ int main(int argc, char **argv)
 
     SetConfigFlags(FLAG_WINDOW_RESIZABLE | FLAG_MSAA_4X_HINT);
     InitWindow(800, 600, "r8");
+    if (!IsWindowReady()) {
+        TraceLog(LOG_ERROR, "Could not initialize the Window. See error messages above.");
+        return 1;
+    }
     SetTargetFPS(UI_FPS);
     SetExitKey(KEY_NULL);
 
