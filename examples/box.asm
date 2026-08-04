@@ -49,6 +49,14 @@ update:
     inc BOX_Y
 .skip_down:
 
+    lda BOX_X
+    and #$3F
+    sta BOX_X
+
+    lda BOX_Y
+    and #$3F
+    sta BOX_Y
+
     jsr clear_canvas
     jsr box
 
@@ -91,6 +99,8 @@ box:
     dey
     jmp .loop
 .over:
+
+    ;; TODO: do the #$3F for each value of Y in the box routine
 
     ldy BOX_X
     lda #$FF
