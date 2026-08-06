@@ -11,6 +11,8 @@
 #define THIRDPARTY_FOLDER "thirdparty/"
 #define TARGET_NAME "linux_amd64"
 #define RAYLIB_SRC_FOLDER THIRDPARTY_FOLDER "raylib-6.0/src/"
+#define GLFW_SRC_FOLDER RAYLIB_SRC_FOLDER "external/glfw/"
+#define WAYLAND_PROTOCOLS_FOLDER GLFW_SRC_FOLDER "deps/wayland/"
 
 #include "./src/layout.h"
 
@@ -75,8 +77,9 @@ int main(int argc, char **argv)
     cmd_append(&cmd, BUILD_FOLDER"fake6502.o");
     cmd_append(&cmd, "-L"BUILD_FOLDER"raylib_"TARGET_NAME"/");
     cmd_append(&cmd, "-l:libraylib.a");
-    cmd_append(&cmd, "-lm");
+    cmd_append(&cmd, "-ldl");
     cmd_append(&cmd, "-lX11");
+    cmd_append(&cmd, "-lm");
     if (!cmd_run(&cmd)) return 1;
 
     if (run_example) {
@@ -97,6 +100,50 @@ static const char *raylib_modules[] = {
     "rtextures",
 };
 
+// Taken from the generate_wayland_protocol() calls under GLFW_BUILD_WAYLAND
+// in external/glfw/CMakeLists.txt (upstream GLFW, not raylib's own Makefile).
+static const char *wayland_protocols[] = {
+    "wayland",
+    "xdg-shell",
+    "xdg-decoration-unstable-v1",
+    "viewporter",
+    "relative-pointer-unstable-v1",
+    "pointer-constraints-unstable-v1",
+    "fractional-scale-v1",
+    "xdg-activation-v1",
+    "idle-inhibit-unstable-v1",
+};
+
+bool build_wayland_protocols(const char *output_dir)
+{
+    bool result = true;
+    Cmd cmd = {0};
+    Procs procs = {0};
+
+    if (!mkdir_if_not_exists(output_dir)) return_defer(false);
+
+    for (size_t i = 0; i < ARRAY_LEN(wayland_protocols); ++i) {
+        const char *xml_path = temp_sprintf(WAYLAND_PROTOCOLS_FOLDER"%s.xml", wayland_protocols[i]);
+        const char *header_path = temp_sprintf("%s/%s-client-protocol.h", output_dir, wayland_protocols[i]);
+        const char *code_path = temp_sprintf("%s/%s-client-protocol-code.h", output_dir, wayland_protocols[i]);
+
+        if (needs_rebuild1(header_path, xml_path)) {
+            cmd_append(&cmd, "wayland-scanner", "client-header", xml_path, header_path);
+            if (!cmd_run(&cmd, .async = &procs)) return_defer(false);
+        }
+        if (needs_rebuild1(code_path, xml_path)) {
+            cmd_append(&cmd, "wayland-scanner", "private-code", xml_path, code_path);
+            if (!cmd_run(&cmd, .async = &procs)) return_defer(false);
+        }
+    }
+
+    if (!procs_flush(&procs)) return_defer(false);
+
+defer:
+    cmd_free(cmd);
+    return result;
+}
+
 bool build_raylib(void)
 {
     bool result = true;
@@ -106,8 +153,13 @@ bool build_raylib(void)
     Procs procs = {0};
 
     const char *build_path = BUILD_FOLDER "raylib_" TARGET_NAME;
+    const char *wayland_protocols_path = temp_sprintf("%s/wayland-protocols", build_path);
 
     if (!mkdir_if_not_exists(build_path)) {
+        return_defer(false);
+    }
+
+    if (!build_wayland_protocols(wayland_protocols_path)) {
         return_defer(false);
     }
 
@@ -120,8 +172,9 @@ bool build_raylib(void)
 
         if (needs_rebuild(output_path, &input_path, 1)) {
             cmd_append(&cmd, "cc",
-                "-ggdb", "-DPLATFORM_DESKTOP", "-D_GLFW_X11", "-fPIC", "-DSUPPORT_FILEFORMAT_FLAC=1",
+                "-ggdb", "-DPLATFORM_DESKTOP", "-D_GLFW_X11", "-D_GLFW_WAYLAND", "-fPIC", "-DSUPPORT_FILEFORMAT_FLAC=1",
                 "-I"RAYLIB_SRC_FOLDER"external/glfw/include",
+                "-I", wayland_protocols_path,
                 "-c", input_path,
                 "-o", output_path);
             if (!cmd_run(&cmd, .async = &procs)) return_defer(false);
