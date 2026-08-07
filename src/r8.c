@@ -6,6 +6,7 @@
 #include "raylib.h"
 #include "raymath.h"
 #include "no_rom.c"
+#include "ui.h"
 
 #define UI_FPS 60 // The FPS the UI is running at
 #define DEFAULT_EMU_FPS 5 // Default FPS the 6502 emulator is running at
@@ -83,13 +84,6 @@ bool reload_rom(String_Builder *rom, const char *rom_path)
     return true;
 }
 
-void box_pad(Rectangle *a, float pad);
-void box_merge(Rectangle *a, Rectangle b);
-void play_icon(Rectangle button_box, Color color);
-void pause_icon(Rectangle button_box, Color color);
-void reset_icon(Rectangle button_box, Color color, Color background_color);
-bool button(Rectangle button_box, Camera2D camera, Color color);
-
 int main(int argc, char **argv)
 {
     const char *program_name = shift(argv, argc);
@@ -127,6 +121,8 @@ int main(int argc, char **argv)
     float global_timer = 0;
     bool pause = false;
     Rectangle ui_box = {0};
+    bool pause_button_down = false;
+    bool reset_button_down = false;
     while (!WindowShouldClose()) {
         if (IsKeyPressed(KEY_R) && IsKeyDown(KEY_LEFT_CONTROL)) {
             reload_rom(&rom, rom_path);
@@ -194,27 +190,24 @@ int main(int argc, char **argv)
                 Rectangle button_box = {0};
                 button_box.x      = canvas_box.x + canvas.width + margin_between_canvas_and_buttons;
                 button_box.y      = canvas_box.y + margin_between_canvas_and_buttons;
-                button_box.width  = canvas_box.width*0.05;
+                button_box.width  = canvas_box.width*0.07;
                 button_box.height = button_box.width;
 
-                Color icon_color   = GetColor(BACKGROUND_COLOR);
-                Color button_color = WHITE;
-
                 // Toggle Pause Button
-                if (button(button_box, camera, button_color)) pause = !pause;
-                if (pause) play_icon(button_box, icon_color); else pause_icon(button_box, icon_color);
+                if (button(&pause_button_down, button_box, pause ? play_icon : pause_icon, camera)) {
+                    pause = !pause;
+                }
                 box_merge(&ui_box, button_box);
 
                 // Reset Button
                 button_box.y += button_box.height + margin_between_canvas_and_buttons;
-                if (button(button_box, camera, button_color)) {
+                if (button(&reset_button_down, button_box, reset_icon, camera)) {
                     reload_rom(&rom, rom_path);
                     call_vector(ENTRY_POINT);
                 }
                 box_merge(&ui_box, button_box);
-                reset_icon(button_box, icon_color, WHITE);
 
-                box_pad(&ui_box, 2);
+                ui_box = box_pad(ui_box, 2);
             } EndMode2D();
         } EndDrawing();
     }
@@ -224,99 +217,4 @@ int main(int argc, char **argv)
     return 0;
 }
 
-void box_merge(Rectangle *a, Rectangle b)
-{
-    if (b.x < a->x) {
-        a->x = b.x;
-    }
-    if (b.y < a->y) {
-        a->y = b.y;
-    }
-    if (a->x + a->width < b.x + b.width) {
-        a->width = b.x + b.width;
-    }
-    if (a->y + a->height < b.y + b.height) {
-        a->height = b.y + b.height;
-    }
-}
-
-void box_pad(Rectangle *a, float pad)
-{
-    a->x      -= pad;
-    a->y      -= pad;
-    a->width  += pad*2;
-    a->height += pad*2;
-}
-
-void play_icon(Rectangle button_box, Color color)
-{
-    float icon_padding_left   = 0.3*button_box.width;
-    float icon_padding_right  = 0.2*button_box.width;
-    float icon_padding_top    = 0.2*button_box.width;
-    float icon_padding_bottom = 0.2*button_box.width;
-    Vector2 v1 = {button_box.x + icon_padding_left, button_box.y + icon_padding_top};
-    Vector2 v2 = {button_box.x + icon_padding_left, button_box.y + button_box.height - icon_padding_bottom};
-    Vector2 v3 = {button_box.x + button_box.width - icon_padding_right, button_box.y + button_box.height*0.5};
-    DrawTriangle(v1, v2, v3, color);
-}
-
-void pause_icon(Rectangle button_box, Color color)
-{
-    float icon_padding = 0.2*button_box.width;
-    Rectangle pause_icon_box = {
-        .x      = button_box.x + icon_padding,
-        .y      = button_box.y + icon_padding,
-        .width  = button_box.width - icon_padding - icon_padding,
-        .height = button_box.height - icon_padding - icon_padding,
-    };
-    DrawRectangleRec((Rectangle) {
-        .x      = pause_icon_box.x,
-        .y      = pause_icon_box.y,
-        .width  = pause_icon_box.width/3.,
-        .height = pause_icon_box.height,
-    }, color);
-    DrawRectangleRec((Rectangle) {
-        .x      = pause_icon_box.x + pause_icon_box.width*2./3.,
-        .y      = pause_icon_box.y,
-        .width  = pause_icon_box.width/3.,
-        .height = pause_icon_box.height,
-    }, color);
-}
-
-void reset_icon(Rectangle button_box, Color color, Color background_color)
-{
-    float radius = 0.35*fminf(button_box.width, button_box.height);
-
-    Vector2 center = {
-        .x = button_box.x + button_box.width*0.5,
-        .y = button_box.y + button_box.height*0.5,
-    };
-
-    float gap_angle = 50;
-    DrawCircleSector(center, radius, gap_angle*0.5, 360 - gap_angle*0.5, 20, color);
-    DrawCircleV(center, radius*0.5, background_color);
-
-    // Arrow
-    {
-        Vector2 v = {1, 0};
-        v = Vector2Rotate(v, -0.5*gap_angle*DEG2RAD);
-
-        Vector2 c = center;
-        c = Vector2Add(c, Vector2Scale(v, radius*0.75));
-
-        float size = 0.65*radius;
-        v = Vector2Rotate(v, 85*DEG2RAD);
-        Vector2 v1 = Vector2Add(c, Vector2Scale(v, size));
-        Vector2 v2 = Vector2Add(c, Vector2Scale(Vector2Rotate(v, -120*DEG2RAD), size));
-        Vector2 v3 = Vector2Add(c, Vector2Scale(Vector2Rotate(v, 120*DEG2RAD), size));
-        DrawTriangle(v1, v2, v3, color);
-    }
-}
-
-bool button(Rectangle button_box, Camera2D camera, Color color)
-{
-    DrawRectangleRec(button_box, color);
-    bool hover = CheckCollisionPointRec(GetScreenToWorld2D(GetMousePosition(), camera), button_box);
-    bool click = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);
-    return (hover && click);
-}
+#include "ui.c"
