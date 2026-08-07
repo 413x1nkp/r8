@@ -20,6 +20,7 @@ bool build_raylib(void);
 bool generate_no_rom_asm(const char *output_asm_path);
 bool rom_to_c(const char *input_path, const char *output_path);
 bool build_rom_with_vasm(Cmd *cmd, const char *input_path, const char *output_path);
+bool compile_vasm_examples_in_markdown(const char *file_path, const char *folder_path);
 
 int main(int argc, char **argv)
 {
@@ -43,12 +44,16 @@ int main(int argc, char **argv)
         return 0;
     }
 
+    Cmd cmd = {0};
+
     if (!mkdir_if_not_exists(BUILD_FOLDER)) return 1;
     if (!mkdir_if_not_exists(BUILD_FOLDER EXAMPLES_FOLDER)) return 1;
+    if (!mkdir_if_not_exists(BUILD_FOLDER "markdown_vasm")) return 1;
 
     if (!build_raylib()) return 1;
 
-    Cmd cmd = {0};
+    if (!compile_vasm_examples_in_markdown("README.md", BUILD_FOLDER "markdown_vasm")) return 1;
+
     cmd_append(&cmd, "cc");
     cmd_append(&cmd, "-Wall");
     cmd_append(&cmd, "-Wextra");
@@ -278,4 +283,53 @@ bool build_rom_with_vasm(Cmd *cmd, const char *input_path, const char *output_pa
     cmd_append(cmd, "-Fbin");
     cmd_append(cmd, "-o", output_path);
     return cmd_run(cmd);
+}
+
+bool compile_vasm_examples_in_markdown(const char *md_path, const char *folder_path)
+{
+    bool result = true;
+    Cmd cmd = {0};
+    String_Builder input = {0};
+    String_Builder example = {0};
+
+    if (!read_entire_file(md_path, &input)) return_defer(false);
+
+    String_View sv = sb_to_sv(input);
+
+    bool asm_code = false;
+    size_t counter = 0;
+    for (size_t line_number = 1; sv.count > 0; line_number++) {
+        String_View line = sv_chop_by_delim(&sv, '\n');
+        if (asm_code) {
+            if (sv_eq(line, SVLIT("```"))) {
+                const char *asm_path = temp_sprintf("%s/example-%zu.asm", folder_path, counter);
+                if (!write_entire_file(asm_path, example.items, example.count)) {
+                    return_defer(false);
+                }
+                nob_log(INFO, "Extracted %s from %s", asm_path, md_path);
+
+                const char *rom_path = temp_sprintf("%s/example-%zu.rom", folder_path, counter);
+                if (!build_rom_with_vasm(&cmd, asm_path, rom_path)) {
+                    return_defer(false);
+                }
+
+                asm_code = false;
+                counter += 1;
+            } else {
+                sb_append_sv(&example, line);
+                sb_appendf(&example, " ;; %s:%d\n", md_path, line_number);
+            }
+        } else {
+            if (sv_eq(line, SVLIT("```asm"))) {
+                asm_code = true;
+                example.count = 0;
+            }
+        }
+    }
+
+defer:
+    free(cmd.items);
+    free(input.items);
+    free(example.items);
+    return result;
 }
