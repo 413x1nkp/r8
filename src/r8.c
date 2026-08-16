@@ -13,6 +13,7 @@
 #include "layout.h"
 #define MAX_VECTOR_STEPS (10*1000*1000)
 #define BACKGROUND_COLOR 0x181818FF
+#define SAMPLERATE 44100
 
 // 0x1000 .. 0x2000
 
@@ -27,6 +28,24 @@ void push16(uint16_t pushval);
 extern uint16_t pc;
 extern uint8_t sp, a, x, y, status;
 #define FLAG_INTERRUPT 0x04
+
+struct AudioChannel {
+    uint16_t freq;
+
+    // duration of a note in ticks
+    uint8_t duration;
+
+    // volume and waveform control
+    //   0000        0000
+    // ^volume^   ^waveform^
+    uint8_t control;
+
+    // internal, not exposed to 6502
+    uint32_t phase_accum;
+    uint16_t noise_lfsr;
+};
+
+struct AudioChannel channels[4];
 
 uint8_t read6502(uint16_t address)
 {
@@ -50,6 +69,62 @@ void load_rom_at(uint8_t *rom_bytes, size_t rom_count, uint16_t offset)
         assert(i + offset < sizeof(MEMORY));
         MEMORY[i + offset] = x;
     }
+}
+
+#define AUDIO_BUFFER_SIZE 2048
+#define WAVE_TABLE_SIZE 256
+
+int8_t square_wave[WAVE_TABLE_SIZE];
+int8_t triangle_wave[WAVE_TABLE_SIZE];
+int8_t sawtooth_wave[WAVE_TABLE_SIZE];
+
+void generate_wave_tables(void) {
+    for (int i = 0; i < WAVE_TABLE_SIZE; ++i) {
+        if (i < 128) square_wave[i] = 127;
+        else square_wave[i] = -127;
+    }
+
+    for (int i = 0; i < WAVE_TABLE_SIZE; ++i) {
+        if (i < 128) triangle_wave[i] = (i * 2) - 127;
+        else triangle_wave[i] = 127 - ((i - 128) * 2);
+    }
+
+    for (int i = 0; i < WAVE_TABLE_SIZE; ++i) {
+        sawtooth_wave[i] = (i * 2) - 127;
+    }
+}
+
+int16_t generate_sample(struct AudioChannel* ch) {
+    uint8_t volume = (ch->control >> 4) & 0x0F;
+
+    if (volume == 0) return 0;
+
+    ch->phase_accum += ch->freq;
+    uint8_t pos = (ch->phase_accum >> 8) & 0xFF;
+
+    int8_t raw_sample = 0;
+
+    // select instrument based on the lower 4 bits
+    switch (ch->control & 0x0F) {
+        case 0: break;
+        case 1: raw_sample = square_wave[pos];   break;
+        case 2: raw_sample = triangle_wave[pos]; break;
+        case 3: raw_sample = sawtooth_wave[pos]; break;
+        case 4: {
+            uint16_t bit = ((ch->noise_lfsr >> 0) ^ (ch->noise_lfsr >> 2) ^ (ch->noise_lfsr >> 3) ^ (ch->noise_lfsr >> 5)) & 1;
+            ch->noise_lfsr = (ch->noise_lfsr >> 1) | (bit << 15);
+            raw_sample = (ch->noise_lfsr & 1) ? 127 : -127;
+        } break;
+    }
+
+    return (raw_sample * volume) / 0x0F;
+}
+
+void init_audio_channels(void) {
+    channels[0].noise_lfsr = 0xACE1;
+    channels[1].noise_lfsr = 0xDEAD;
+    channels[2].noise_lfsr = 0xBEEF;
+    channels[3].noise_lfsr = 0x1337;
 }
 
 bool call_vector(uint16_t vector_address)
@@ -108,6 +183,15 @@ int main(int argc, char **argv)
     SetTargetFPS(UI_FPS);
     SetExitKey(KEY_NULL);
 
+    init_audio_channels();
+    generate_wave_tables();
+
+    int16_t pcm_buffer[AUDIO_BUFFER_SIZE];
+    InitAudioDevice();
+    SetAudioStreamBufferSizeDefault(AUDIO_BUFFER_SIZE);
+    AudioStream stream = LoadAudioStream(SAMPLERATE, 16, 1);
+    SetAudioStreamPan(stream, 0.0f); // center
+    PlayAudioStream(stream);
 
     Texture canvas = LoadTextureFromImage((Image) {
         .data    = MEMORY + CANVAS,
@@ -188,6 +272,49 @@ int main(int argc, char **argv)
                     MEMORY[MOUSE_BTN] = mouse_btn_state;
                 }
 
+                // update sound
+                for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
+                    // combine the low and high byte
+                    channels[ch].freq = (MEMORY[SOUNDCHIP + 4*ch] << 8) | (MEMORY[SOUNDCHIP + 4*ch + 1]);
+                    channels[ch].duration = MEMORY[SOUNDCHIP + 4*ch + 2];
+                    channels[ch].control = MEMORY[SOUNDCHIP + 4*ch + 3];
+                }
+
+                for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
+                    if (channels[ch].duration > 0) {
+                        channels[ch].duration--;
+                        if (channels[ch].duration == 0) {
+                            // set volume to 0
+                            channels[ch].control = channels[ch].control & 0x0F;
+                        }
+                    }
+                }
+
+                for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
+                    MEMORY[SOUNDCHIP + 4*ch]     = channels[ch].freq >> 8;
+                    MEMORY[SOUNDCHIP + 4*ch + 1] = channels[ch].freq & 0xFF;
+                    MEMORY[SOUNDCHIP + 4*ch + 2] = channels[ch].duration;
+                    MEMORY[SOUNDCHIP + 4*ch + 3] = channels[ch].control;
+                }
+
+                if (IsAudioStreamProcessed(stream)) {
+                    for (int i = 0; i < AUDIO_BUFFER_SIZE; ++i) {
+                        int16_t mix_sample = 0;
+
+                        for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
+                            if (channels[ch].duration > 0) {
+                                mix_sample += generate_sample(&channels[ch]);
+                            }
+                        }
+                        int32_t scaled_sample = (int32_t)mix_sample * 64;
+                        if (scaled_sample > 32767) scaled_sample = 32767;
+                        if (scaled_sample < -32768) scaled_sample = -32768;
+                        pcm_buffer[i] = (int16_t)scaled_sample;
+                    }
+
+                    UpdateAudioStream(stream, pcm_buffer, AUDIO_BUFFER_SIZE);
+                }
+
                 call_vector(read16(UPDATE_VECTOR));
             }
         }
@@ -229,6 +356,8 @@ int main(int argc, char **argv)
         } EndDrawing();
     }
 
+    UnloadAudioStream(stream);
+    CloseAudioDevice();
     CloseWindow();
 
     return 0;
