@@ -35,6 +35,15 @@ struct AudioChannel {
     // duration of a note in ticks
     uint8_t duration;
 
+    // TODO: might want to reconsider the
+    // structure of the control field.
+    // if there are only 4 instruments,
+    // one extra bit can be allocated for
+    // volume instead.
+
+    // TODO: add support for ADSR, pulse width,
+    // possibly filters to match closer with 6581 SID
+
     // volume and waveform control
     //   0000        0000
     // ^volume^   ^waveform^
@@ -272,15 +281,11 @@ int main(int argc, char **argv)
                     MEMORY[MOUSE_BTN] = mouse_btn_state;
                 }
 
-                // update sound
                 for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
                     // combine the low and high byte
                     channels[ch].freq = (MEMORY[SOUNDCHIP + 4*ch] << 8) | (MEMORY[SOUNDCHIP + 4*ch + 1]);
                     channels[ch].duration = MEMORY[SOUNDCHIP + 4*ch + 2];
                     channels[ch].control = MEMORY[SOUNDCHIP + 4*ch + 3];
-                }
-
-                for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
                     if (channels[ch].duration > 0) {
                         channels[ch].duration--;
                         if (channels[ch].duration == 0) {
@@ -288,9 +293,6 @@ int main(int argc, char **argv)
                             channels[ch].control = channels[ch].control & 0x0F;
                         }
                     }
-                }
-
-                for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
                     MEMORY[SOUNDCHIP + 4*ch]     = channels[ch].freq >> 8;
                     MEMORY[SOUNDCHIP + 4*ch + 1] = channels[ch].freq & 0xFF;
                     MEMORY[SOUNDCHIP + 4*ch + 2] = channels[ch].duration;
@@ -306,6 +308,8 @@ int main(int argc, char **argv)
                                 mix_sample += generate_sample(&channels[ch]);
                             }
                         }
+                        // scale the output since the maximum volume at the moment gives a lot of headroom
+                        // will need to adjust this if ever decide to change the volume controls
                         int32_t scaled_sample = (int32_t)mix_sample * 64;
                         if (scaled_sample > 32767) scaled_sample = 32767;
                         if (scaled_sample < -32768) scaled_sample = -32768;
