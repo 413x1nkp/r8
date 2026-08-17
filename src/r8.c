@@ -148,7 +148,7 @@ void reset_audio_channels(void) {
     channels[3].noise_lfsr = 0x1337;
 }
 
-void update_audio_channels(float emu_delta) {
+void update_audio_channels(void) {
     // TODO: there's probably a better way to get the data from MEMORY
     // without having to move it around so much. i guess it's possible
     // to map a memory region directly by casting it to struct, but it's
@@ -171,7 +171,7 @@ void update_audio_channels(float emu_delta) {
         }
 
         if (channels[ch].duration > 0) {
-            channels[ch].internal_duration -= emu_delta * DURATION_TICK_SPEED;
+            channels[ch].internal_duration -= GetFrameTime() * DURATION_TICK_SPEED;
             if (channels[ch].internal_duration <= 0.0f) {
                 channels[ch].internal_duration = 0.0f;
                 channels[ch].duration = 0;
@@ -330,6 +330,7 @@ int main(int argc, char **argv)
             // as there's loss of precision over time otherwise
             global_timer += GetFrameTime();
             float b = fmodf(global_timer, emu_delta_time);
+            update_audio_channels();
             if (b < a) {
                 for (int c = 0; c < 128; ++c) {
                     MEMORY[KEYBOARD + c] = IsKeyDown(c);
@@ -354,8 +355,6 @@ int main(int argc, char **argv)
                 if (mouse_btn_state == 0) {
                     MEMORY[MOUSE_BTN] = mouse_btn_state;
                 }
-
-                update_audio_channels(emu_delta_time);
 
                 call_vector(read16(UPDATE_VECTOR));
             }
