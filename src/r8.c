@@ -30,24 +30,29 @@ extern uint8_t sp, a, x, y, status;
 #define FLAG_INTERRUPT 0x04
 
 struct AudioChannel {
-    uint16_t freq;
+    uint16_t freq;        // offset 0
 
     // duration of a note in ticks
-    uint8_t duration;
+    uint8_t duration;     // offset 2
 
-    // TODO: might want to reconsider the
-    // structure of the control field.
-    // if there are only 4 instruments,
-    // one extra bit can be allocated for
-    // volume instead.
+    // attack and decay control
+    //   0000      0000
+    // ^attack^   ^decay^
+    uint8_t ad;           // offset 3
 
-    // TODO: add support for ADSR, pulse width,
-    // possibly filters to match closer with 6581 SID
-
-    // volume and waveform control
+    // sustain and release control
     //   0000        0000
-    // ^volume^   ^waveform^
-    uint8_t control;
+    // ^sustain^   ^release^
+    uint8_t sr;           // offset 4
+
+    uint8_t pulse_width; // offset 5
+
+    uint8_t volume; // offset 6
+
+    // waveform control
+    //  0000       0000
+    // ^null^   ^waveform^
+    uint8_t control; // offset 7
 
     // internal, not exposed to 6502
     uint32_t phase_accum;
@@ -83,16 +88,10 @@ void load_rom_at(uint8_t *rom_bytes, size_t rom_count, uint16_t offset)
 #define AUDIO_BUFFER_SIZE 2048
 #define WAVE_TABLE_SIZE 256
 
-int8_t square_wave[WAVE_TABLE_SIZE];
 int8_t triangle_wave[WAVE_TABLE_SIZE];
 int8_t sawtooth_wave[WAVE_TABLE_SIZE];
 
 void generate_wave_tables(void) {
-    for (int i = 0; i < WAVE_TABLE_SIZE; ++i) {
-        if (i < 128) square_wave[i] = 127;
-        else square_wave[i] = -127;
-    }
-
     for (int i = 0; i < WAVE_TABLE_SIZE; ++i) {
         if (i < 128) triangle_wave[i] = (i * 2) - 127;
         else triangle_wave[i] = 127 - ((i - 128) * 2);
@@ -104,9 +103,7 @@ void generate_wave_tables(void) {
 }
 
 int16_t generate_sample(struct AudioChannel* ch) {
-    uint8_t volume = (ch->control >> 4) & 0x0F;
-
-    if (volume == 0) return 0;
+    if (ch->volume == 0) return 0;
 
     // to achieve highest frequency resolution, utilize all the bits in phase accumulator.
     // effective precision: 4294967296 / 44100 = 0.00001026783138513565 Hz
@@ -119,7 +116,10 @@ int16_t generate_sample(struct AudioChannel* ch) {
     // select instrument based on the lower 4 bits
     switch (ch->control & 0x0F) {
         case 0: break;
-        case 1: raw_sample = square_wave[pos];   break;
+        case 1: {
+            if (pos < ch->pulse_width) raw_sample = 127;
+            else raw_sample = -127;
+        } break;
         case 2: raw_sample = triangle_wave[pos]; break;
         case 3: raw_sample = sawtooth_wave[pos]; break;
         case 4: {
@@ -129,7 +129,7 @@ int16_t generate_sample(struct AudioChannel* ch) {
         } break;
     }
 
-    return (raw_sample * volume) / 0x0F;
+    return (raw_sample * ch->volume) / 0x0F;
 }
 
 void init_audio_channels(void) {
@@ -257,6 +257,8 @@ int main(int argc, char **argv)
             if (emu_fps == 0) { emu_fps = DEFAULT_EMU_FPS; }
             float emu_delta_time = 1.f / (float) emu_fps;
             float a = fmodf(global_timer, emu_delta_time);
+            // TODO: maybe will be better to use GetTime instead of accumulation,
+            // as there's loss of precision over time otherwise
             global_timer += GetFrameTime();
             float b = fmodf(global_timer, emu_delta_time);
             if (b < a) {
@@ -286,20 +288,30 @@ int main(int argc, char **argv)
 
                 for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
                     // combine the low and high byte
-                    channels[ch].freq = (MEMORY[SOUNDCHIP + 4*ch] << 8) | (MEMORY[SOUNDCHIP + 4*ch + 1]);
-                    channels[ch].duration = MEMORY[SOUNDCHIP + 4*ch + 2];
-                    channels[ch].control = MEMORY[SOUNDCHIP + 4*ch + 3];
+                    channels[ch].freq = (MEMORY[SOUNDCHIP + 8*ch] << 8) | (MEMORY[SOUNDCHIP + 8*ch + 1]);
+                    channels[ch].duration = MEMORY[SOUNDCHIP + 8*ch + 2];
+                    channels[ch].ad = MEMORY[SOUNDCHIP + 8*ch + 3];
+                    channels[ch].sr = MEMORY[SOUNDCHIP + 8*ch + 4];
+                    channels[ch].pulse_width = MEMORY[SOUNDCHIP + 8*ch + 5];
+                    channels[ch].volume = MEMORY[SOUNDCHIP + 8*ch + 6];
+                    channels[ch].control = MEMORY[SOUNDCHIP + 8*ch + 7];
                     if (channels[ch].duration > 0) {
                         channels[ch].duration--;
                         if (channels[ch].duration == 0) {
-                            // set volume to 0
-                            channels[ch].control = channels[ch].control & 0x0F;
+                            channels[ch].volume = 0;
                         }
                     }
-                    MEMORY[SOUNDCHIP + 4*ch]     = channels[ch].freq >> 8;
-                    MEMORY[SOUNDCHIP + 4*ch + 1] = channels[ch].freq & 0xFF;
-                    MEMORY[SOUNDCHIP + 4*ch + 2] = channels[ch].duration;
-                    MEMORY[SOUNDCHIP + 4*ch + 3] = channels[ch].control;
+                    MEMORY[SOUNDCHIP + 8*ch]     = channels[ch].freq >> 8;
+                    MEMORY[SOUNDCHIP + 8*ch + 1] = channels[ch].freq & 0xFF;
+
+                    MEMORY[SOUNDCHIP + 8*ch + 2] = channels[ch].duration;
+                    MEMORY[SOUNDCHIP + 8*ch + 3] = channels[ch].ad;
+                    MEMORY[SOUNDCHIP + 8*ch + 4] = channels[ch].sr;
+
+                    MEMORY[SOUNDCHIP + 8*ch + 5] = channels[ch].pulse_width;
+                    MEMORY[SOUNDCHIP + 8*ch + 6] = channels[ch].volume;
+
+                    MEMORY[SOUNDCHIP + 8*ch + 7] = channels[ch].control;
                 }
 
                 if (IsAudioStreamProcessed(stream)) {
@@ -311,12 +323,7 @@ int main(int argc, char **argv)
                                 mix_sample += generate_sample(&channels[ch]);
                             }
                         }
-                        // scale the output since the maximum volume at the moment gives a lot of headroom
-                        // will need to adjust this if ever decide to change the volume controls
-                        int32_t scaled_sample = (int32_t)mix_sample * 64;
-                        if (scaled_sample > 32767) scaled_sample = 32767;
-                        if (scaled_sample < -32768) scaled_sample = -32768;
-                        pcm_buffer[i] = (int16_t)scaled_sample;
+                        pcm_buffer[i] = mix_sample;
                     }
 
                     UpdateAudioStream(stream, pcm_buffer, AUDIO_BUFFER_SIZE);
