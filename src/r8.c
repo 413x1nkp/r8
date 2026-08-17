@@ -108,8 +108,11 @@ int16_t generate_sample(struct AudioChannel* ch) {
 
     if (volume == 0) return 0;
 
-    ch->phase_accum += ch->freq;
-    uint8_t pos = (ch->phase_accum >> 8) & 0xFF;
+    // to achieve highest frequency resolution, utilize all the bits in phase accumulator.
+    // effective precision: 4294967296 / 44100 = 0.00001026783138513565 Hz
+    // as opposed to 16bit:      65536 / 44100 = 0.67291259765625000000 Hz
+    ch->phase_accum += (ch->freq * (1ULL << 32)) / SAMPLERATE;
+    uint8_t pos = (ch->phase_accum >> 24) & 0xFF;
 
     int8_t raw_sample = 0;
 
