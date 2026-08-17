@@ -297,9 +297,16 @@ int main(int argc, char **argv)
                     channels[ch].volume = MEMORY[SOUNDCHIP + 8*ch + 6];
                     channels[ch].control = MEMORY[SOUNDCHIP + 8*ch + 7];
                     if (channels[ch].duration > 0) {
-                        channels[ch].duration -= GetFrameTime() * DURATION_TICK_SPEED;
-                        if (channels[ch].duration == 0) {
+                        float remaining = (float)channels[ch].duration - GetFrameTime() * DURATION_TICK_SPEED;
+                        if (remaining <= 0.0f) {
+                            channels[ch].duration = 0;
                             channels[ch].volume = 0;
+                        } else {
+                            channels[ch].duration = remaining;
+
+                            if (channels[ch].duration == 0) {
+                                channels[ch].volume = 0;
+                            }
                         }
                     }
                     MEMORY[SOUNDCHIP + 8*ch]     = channels[ch].freq >> 8;
