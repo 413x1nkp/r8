@@ -133,11 +133,62 @@ int16_t generate_sample(struct AudioChannel* ch) {
     return (raw_sample * ch->volume) / 0x0F;
 }
 
-void init_audio_channels(void) {
+void reset_audio_channels(void) {
     channels[0].noise_lfsr = 0xACE1;
     channels[1].noise_lfsr = 0xDEAD;
     channels[2].noise_lfsr = 0xBEEF;
     channels[3].noise_lfsr = 0x1337;
+}
+
+void update_audio_channels(void) {
+    for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
+        // combine the low and high byte
+        channels[ch].freq        = (MEMORY[SOUNDCHIP + 8*ch] << 8) | (MEMORY[SOUNDCHIP + 8*ch + 1]);
+        channels[ch].duration    =  MEMORY[SOUNDCHIP + 8*ch + 2];
+        channels[ch].ad          =  MEMORY[SOUNDCHIP + 8*ch + 3];
+        channels[ch].sr          =  MEMORY[SOUNDCHIP + 8*ch + 4];
+        channels[ch].pulse_width =  MEMORY[SOUNDCHIP + 8*ch + 5];
+        channels[ch].volume      =  MEMORY[SOUNDCHIP + 8*ch + 6];
+        channels[ch].control     =  MEMORY[SOUNDCHIP + 8*ch + 7];
+        if (channels[ch].duration > 0) {
+            float remaining = (float)channels[ch].duration - GetFrameTime() * DURATION_TICK_SPEED;
+            if (remaining <= 0.0f) {
+                channels[ch].duration = 0;
+                channels[ch].volume = 0;
+            } else {
+                channels[ch].duration = remaining;
+
+                if (channels[ch].duration == 0) {
+                    channels[ch].volume = 0;
+                }
+            }
+        }
+        MEMORY[SOUNDCHIP + 8*ch]     = channels[ch].freq >> 8;
+        MEMORY[SOUNDCHIP + 8*ch + 1] = channels[ch].freq & 0xFF;
+
+        MEMORY[SOUNDCHIP + 8*ch + 2] = channels[ch].duration;
+        MEMORY[SOUNDCHIP + 8*ch + 3] = channels[ch].ad;
+        MEMORY[SOUNDCHIP + 8*ch + 4] = channels[ch].sr;
+        MEMORY[SOUNDCHIP + 8*ch + 5] = channels[ch].pulse_width;
+        MEMORY[SOUNDCHIP + 8*ch + 6] = channels[ch].volume;
+        MEMORY[SOUNDCHIP + 8*ch + 7] = channels[ch].control;
+    }
+}
+
+void play_audio_channels(AudioStream stream) {
+    int16_t pcm_buffer[AUDIO_BUFFER_SIZE];
+    for (int i = 0; i < AUDIO_BUFFER_SIZE; ++i) {
+        int16_t mix_sample = 0;
+
+        for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
+            if (channels[ch].duration > 0) {
+                mix_sample += generate_sample(&channels[ch]);
+            }
+        }
+        pcm_buffer[i] = mix_sample;
+    }
+
+    UpdateAudioStream(stream, pcm_buffer, AUDIO_BUFFER_SIZE);
 }
 
 bool call_vector(uint16_t vector_address)
@@ -168,6 +219,7 @@ bool reload_rom(String_Builder *rom, const char *rom_path)
 
     reset6502();
     MEMORY[FPS_CONFIG] = DEFAULT_EMU_FPS;
+    reset_audio_channels();
 
     return true;
 }
@@ -196,10 +248,9 @@ int main(int argc, char **argv)
     SetTargetFPS(UI_FPS);
     SetExitKey(KEY_NULL);
 
-    init_audio_channels();
+    reset_audio_channels();
     generate_wave_tables();
 
-    int16_t pcm_buffer[AUDIO_BUFFER_SIZE];
     InitAudioDevice();
     SetAudioStreamBufferSizeDefault(AUDIO_BUFFER_SIZE);
     AudioStream stream = LoadAudioStream(SAMPLERATE, 16, 1);
@@ -287,54 +338,10 @@ int main(int argc, char **argv)
                     MEMORY[MOUSE_BTN] = mouse_btn_state;
                 }
 
-                for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
-                    // combine the low and high byte
-                    channels[ch].freq = (MEMORY[SOUNDCHIP + 8*ch] << 8) | (MEMORY[SOUNDCHIP + 8*ch + 1]);
-                    channels[ch].duration = MEMORY[SOUNDCHIP + 8*ch + 2];
-                    channels[ch].ad = MEMORY[SOUNDCHIP + 8*ch + 3];
-                    channels[ch].sr = MEMORY[SOUNDCHIP + 8*ch + 4];
-                    channels[ch].pulse_width = MEMORY[SOUNDCHIP + 8*ch + 5];
-                    channels[ch].volume = MEMORY[SOUNDCHIP + 8*ch + 6];
-                    channels[ch].control = MEMORY[SOUNDCHIP + 8*ch + 7];
-                    if (channels[ch].duration > 0) {
-                        float remaining = (float)channels[ch].duration - GetFrameTime() * DURATION_TICK_SPEED;
-                        if (remaining <= 0.0f) {
-                            channels[ch].duration = 0;
-                            channels[ch].volume = 0;
-                        } else {
-                            channels[ch].duration = remaining;
-
-                            if (channels[ch].duration == 0) {
-                                channels[ch].volume = 0;
-                            }
-                        }
-                    }
-                    MEMORY[SOUNDCHIP + 8*ch]     = channels[ch].freq >> 8;
-                    MEMORY[SOUNDCHIP + 8*ch + 1] = channels[ch].freq & 0xFF;
-
-                    MEMORY[SOUNDCHIP + 8*ch + 2] = channels[ch].duration;
-                    MEMORY[SOUNDCHIP + 8*ch + 3] = channels[ch].ad;
-                    MEMORY[SOUNDCHIP + 8*ch + 4] = channels[ch].sr;
-
-                    MEMORY[SOUNDCHIP + 8*ch + 5] = channels[ch].pulse_width;
-                    MEMORY[SOUNDCHIP + 8*ch + 6] = channels[ch].volume;
-
-                    MEMORY[SOUNDCHIP + 8*ch + 7] = channels[ch].control;
-                }
+                update_audio_channels();
 
                 if (IsAudioStreamProcessed(stream)) {
-                    for (int i = 0; i < AUDIO_BUFFER_SIZE; ++i) {
-                        int16_t mix_sample = 0;
-
-                        for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
-                            if (channels[ch].duration > 0) {
-                                mix_sample += generate_sample(&channels[ch]);
-                            }
-                        }
-                        pcm_buffer[i] = mix_sample;
-                    }
-
-                    UpdateAudioStream(stream, pcm_buffer, AUDIO_BUFFER_SIZE);
+                    play_audio_channels(stream);
                 }
 
                 call_vector(read16(UPDATE_VECTOR));
