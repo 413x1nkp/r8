@@ -140,7 +140,12 @@ void reset_audio_channels(void) {
     channels[3].noise_lfsr = 0x1337;
 }
 
-void update_audio_channels(void) {
+void update_audio_channels(float emu_delta) {
+    // TODO: there's probably a better way to get the data from MEMORY
+    // without having to move it around so much. i guess it's possible
+    // to map a memory region directly by casting it to struct, but it's
+    // kind of error prone because of padding and alignment.
+    // this might have to suffice for now
     for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
         // combine the low and high byte
         channels[ch].freq        = (MEMORY[SOUNDCHIP + 8*ch] << 8) | (MEMORY[SOUNDCHIP + 8*ch + 1]);
@@ -151,7 +156,7 @@ void update_audio_channels(void) {
         channels[ch].volume      =  MEMORY[SOUNDCHIP + 8*ch + 6];
         channels[ch].control     =  MEMORY[SOUNDCHIP + 8*ch + 7];
         if (channels[ch].duration > 0) {
-            float remaining = (float)channels[ch].duration - GetFrameTime() * DURATION_TICK_SPEED;
+            float remaining = (float)channels[ch].duration - emu_delta * DURATION_TICK_SPEED;
             if (remaining <= 0.0f) {
                 channels[ch].duration = 0;
                 channels[ch].volume = 0;
@@ -338,13 +343,12 @@ int main(int argc, char **argv)
                     MEMORY[MOUSE_BTN] = mouse_btn_state;
                 }
 
-                update_audio_channels();
-
-                if (IsAudioStreamProcessed(stream)) {
-                    play_audio_channels(stream);
-                }
+                update_audio_channels(emu_delta_time);
 
                 call_vector(read16(UPDATE_VECTOR));
+            }
+            if (IsAudioStreamProcessed(stream)) {
+                play_audio_channels(stream);
             }
         }
 
