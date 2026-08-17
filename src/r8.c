@@ -50,14 +50,22 @@ struct AudioChannel {
 
     uint8_t volume; // offset 6
 
-    // waveform control
-    //  0000       0000
-    // ^null^   ^waveform^
+    // channel control
+    // BITS
+    // 0 -- reset the fractional part of remaining_duration by setting it to (float)duration
+    // 0
+    // 0
+    // 0
+    // 0 --+
+    // 0   | waveform
+    // 0   | control
+    // 0 --+
     uint8_t control; // offset 7
 
     // internal, not exposed to 6502
     uint32_t phase_accum;
     uint16_t noise_lfsr;
+    float internal_duration;
 };
 
 struct AudioChannel channels[4];
@@ -155,17 +163,21 @@ void update_audio_channels(float emu_delta) {
         channels[ch].pulse_width =  MEMORY[SOUNDCHIP + 8*ch + 5];
         channels[ch].volume      =  MEMORY[SOUNDCHIP + 8*ch + 6];
         channels[ch].control     =  MEMORY[SOUNDCHIP + 8*ch + 7];
+
+        // check 'reset inner clock' bit
+        if (channels[ch].control & 0x80) {
+            channels[ch].control &= 0x7F;
+            channels[ch].internal_duration = (float)channels[ch].duration;
+        }
+
         if (channels[ch].duration > 0) {
-            float remaining = (float)channels[ch].duration - emu_delta * DURATION_TICK_SPEED;
-            if (remaining <= 0.0f) {
+            channels[ch].internal_duration -= emu_delta * DURATION_TICK_SPEED;
+            if (channels[ch].internal_duration <= 0.0f) {
+                channels[ch].internal_duration = 0.0f;
                 channels[ch].duration = 0;
                 channels[ch].volume = 0;
             } else {
-                channels[ch].duration = remaining;
-
-                if (channels[ch].duration == 0) {
-                    channels[ch].volume = 0;
-                }
+                channels[ch].duration = ceilf(channels[ch].internal_duration);
             }
         }
         MEMORY[SOUNDCHIP + 8*ch]     = channels[ch].freq >> 8;
