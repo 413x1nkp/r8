@@ -14,6 +14,7 @@
 #define MAX_VECTOR_STEPS (10*1000*1000)
 #define BACKGROUND_COLOR 0x181818FF
 #define SAMPLERATE 44100
+#define DURATION_TICK_SPEED 10.0f
 
 // 0x1000 .. 0x2000
 
@@ -296,7 +297,7 @@ int main(int argc, char **argv)
                     channels[ch].volume = MEMORY[SOUNDCHIP + 8*ch + 6];
                     channels[ch].control = MEMORY[SOUNDCHIP + 8*ch + 7];
                     if (channels[ch].duration > 0) {
-                        channels[ch].duration--;
+                        channels[ch].duration -= GetFrameTime() * DURATION_TICK_SPEED;
                         if (channels[ch].duration == 0) {
                             channels[ch].volume = 0;
                         }
