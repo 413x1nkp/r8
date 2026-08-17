@@ -52,7 +52,7 @@ struct AudioChannel {
 
     // channel control
     // BITS
-    // 0 -- reset the fractional part of remaining_duration by setting it to (float)duration
+    // 0 -- reset the fractional part of internal_duration by setting it to (float)duration
     // 0
     // 0
     // 0
