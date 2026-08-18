@@ -14,6 +14,11 @@
 #define MAX_VECTOR_STEPS (10*1000*1000)
 #define BACKGROUND_COLOR 0x181818FF
 
+#define SAMPLERATE 44100
+#define AUDIO_BUFFER_SIZE 2048
+#define WAVE_TABLE_SIZE 256
+#define SOUNDCHIP_CLOCK_RATE 1.0f / 100.0f
+
 // 0x1000 .. 0x2000
 
 static uint8_t MEMORY[1<<16];
@@ -27,6 +32,59 @@ void push16(uint16_t pushval);
 extern uint16_t pc;
 extern uint8_t sp, a, x, y, status;
 #define FLAG_INTERRUPT 0x04
+
+enum ADSRStage {
+    ADSR_NONE, // null stage to reset to after release
+    ADSR_ATTACK,
+    ADSR_DECAY,
+    ADSR_SUSTAIN,
+    ADSR_RELEASE,
+};
+
+struct AudioChannel {
+    uint16_t freq;        // offset 0
+
+    // extra byte for nicer alignment
+    // currently does nothing
+    // TODO: maybe use for panning
+    uint8_t unused;      // offset 2
+
+    // attack and decay control
+    //   0000      0000
+    // ^attack^   ^decay^
+    uint8_t ad;          // offset 3
+
+    // sustain and release control
+    //   0000        0000
+    // ^sustain^   ^release^
+    uint8_t sr;          // offset 4
+
+    uint8_t pulse_width; // offset 5
+
+    uint8_t volume;      // offset 6
+
+    // channel control
+    // BITS
+    // 0 -- GATE (1 means play, 0 means stop)
+    // 0
+    // 0
+    // 0
+    // 0 --+
+    // 0   | waveform
+    // 0   | control
+    // 0 --+
+    uint8_t control;     // offset 7
+
+    // internal, not exposed to 6502
+    uint32_t phase_accum;
+    uint16_t noise_lfsr;
+    bool gate_flipped;
+    enum ADSRStage stage;
+    float adsr_gain;
+};
+
+struct AudioChannel channels[4];
+uint16_t soundchip_clock = 0;
 
 uint8_t read6502(uint16_t address)
 {
@@ -50,6 +108,157 @@ void load_rom_at(uint8_t *rom_bytes, size_t rom_count, uint16_t offset)
         assert(i + offset < sizeof(MEMORY));
         MEMORY[i + offset] = x;
     }
+}
+
+int8_t triangle_wave[WAVE_TABLE_SIZE];
+int8_t sawtooth_wave[WAVE_TABLE_SIZE];
+
+// attack duration in seconds
+const float attack_envelope[16] = {
+    0.002f, 0.008f, 0.016f, 0.024f,
+    0.038f, 0.056f, 0.068f, 0.080f,
+    0.1f,   0.25f,  0.5f,   0.8f,
+    1.0f,   3.0f,   5.0f,   8.0f,
+};
+
+// decay & release duration in seconds
+const float dr_envelope[16] = {
+    0.006f, 0.024f, 0.048f, 0.072f,
+    0.114f, 0.168f, 0.204f, 0.240f,
+    0.3f,   0.75f,  1.5f,   2.4f,
+    3.0f,   9.0f,   15.0f,  24.0f,
+};
+
+void generate_wave_tables(void) {
+    for (int i = 0; i < WAVE_TABLE_SIZE; ++i) {
+        if (i < 128) triangle_wave[i] = (i * 2) - 127;
+        else triangle_wave[i] = 127 - ((i - 128) * 2);
+    }
+
+    for (int i = 0; i < WAVE_TABLE_SIZE; ++i) {
+        sawtooth_wave[i] = (i * 2) - 127;
+    }
+}
+
+int16_t generate_sample(struct AudioChannel* ch) {
+    if (ch->volume == 0) return 0;
+
+    // to achieve highest frequency resolution, utilize all the bits in phase accumulator.
+    // effective precision: 4294967296 / 44100 = 0.00001026783138513565 Hz
+    // as opposed to 16bit:      65536 / 44100 = 0.67291259765625000000 Hz
+    ch->phase_accum += (ch->freq * (1ULL << 32)) / SAMPLERATE;
+    uint8_t pos = (ch->phase_accum >> 24) & 0xFF;
+
+    uint32_t attack_samples  = attack_envelope[(ch->ad >> 4)] * SAMPLERATE;
+    uint32_t decay_samples   = dr_envelope[(ch->ad & 0x0F)] * SAMPLERATE;
+    uint32_t release_samples = dr_envelope[(ch->sr & 0x0F)] * SAMPLERATE;
+
+    // set sustain in increments of 1.0f / 15.0f
+    float sustain_level = (float)(ch->sr >> 4) / 0x0F;
+
+    float attack_inc  = 1.0f / attack_samples;
+    float decay_inc   = (1.0f - sustain_level) / (float)decay_samples;
+    float release_inc = sustain_level / (float)release_samples;
+
+    if (ch->gate_flipped) {
+        if (ch->control & 0x80) {
+            ch->adsr_gain = 0.0f;
+            ch->stage = ADSR_ATTACK;
+        } else {
+            ch->stage = ADSR_RELEASE;
+        }
+        ch->gate_flipped = false;
+    }
+
+    switch (ch->stage) {
+        case ADSR_NONE: {} break;
+
+        case ADSR_ATTACK: {
+            ch->adsr_gain += attack_inc;
+            if (ch->adsr_gain >= 1.0f) {
+                ch->adsr_gain = 1.0f;
+                ch->stage = ADSR_DECAY;
+            }
+        } break;
+
+        case ADSR_DECAY: {
+            ch->adsr_gain -= decay_inc;
+            if (ch->adsr_gain <= sustain_level) {
+                ch->adsr_gain = sustain_level;
+                ch->stage = ADSR_SUSTAIN;
+            }
+        } break;
+
+        case ADSR_SUSTAIN: {} break;
+
+        case ADSR_RELEASE: {
+            ch->adsr_gain -= release_inc;
+            if (ch->adsr_gain <= 0.0f) {
+                ch->adsr_gain = 0.0f;
+                ch->stage = ADSR_NONE;
+            }
+        } break;
+    }
+
+    int8_t raw_sample = 0;
+
+    // select instrument based on the lower 4 bits
+    switch (ch->control & 0x0F) {
+        case 0: break;
+        case 1: {
+            if (pos < ch->pulse_width) raw_sample = 127;
+            else raw_sample = -127;
+        } break;
+        case 2: raw_sample = triangle_wave[pos]; break;
+        case 3: raw_sample = sawtooth_wave[pos]; break;
+        case 4: {
+            uint16_t bit = ((ch->noise_lfsr >> 0) ^ (ch->noise_lfsr >> 2) ^ (ch->noise_lfsr >> 3) ^ (ch->noise_lfsr >> 5)) & 1;
+            ch->noise_lfsr = (ch->noise_lfsr >> 1) | (bit << 15);
+            raw_sample = (ch->noise_lfsr & 1) ? 127 : -127;
+        } break;
+    }
+
+    return (raw_sample * ch->volume * ch->adsr_gain) / 0x0F;
+}
+
+void reset_audio_channels(void) {
+    channels[0].noise_lfsr = 0xACE1;
+    channels[1].noise_lfsr = 0xDEAD;
+    channels[2].noise_lfsr = 0xBEEF;
+    channels[3].noise_lfsr = 0x1337;
+}
+
+void update_audio_channels(void) {
+    for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
+        // combine the low and high byte
+        channels[ch].freq        = (MEMORY[SOUNDCHIP + 8*ch + 1] << 8) | (MEMORY[SOUNDCHIP + 8*ch]);
+        channels[ch].unused      =  MEMORY[SOUNDCHIP + 8*ch + 2];
+        channels[ch].ad          =  MEMORY[SOUNDCHIP + 8*ch + 3];
+        channels[ch].sr          =  MEMORY[SOUNDCHIP + 8*ch + 4];
+        channels[ch].pulse_width =  MEMORY[SOUNDCHIP + 8*ch + 5];
+        channels[ch].volume      =  MEMORY[SOUNDCHIP + 8*ch + 6];
+        uint8_t new_control      =  MEMORY[SOUNDCHIP + 8*ch + 7];
+
+        if ((channels[ch].control & 0x80) != (new_control & 0x80)) {
+            channels[ch].gate_flipped = true;
+        }
+
+        channels[ch].control = new_control;
+    }
+}
+
+void play_audio_channels(AudioStream stream) {
+    int16_t pcm_buffer[AUDIO_BUFFER_SIZE];
+    for (int i = 0; i < AUDIO_BUFFER_SIZE; ++i) {
+        int16_t mix_sample = 0;
+
+        for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
+            mix_sample += generate_sample(&channels[ch]);
+        }
+        pcm_buffer[i] = mix_sample;
+    }
+
+    UpdateAudioStream(stream, pcm_buffer, AUDIO_BUFFER_SIZE);
 }
 
 bool call_vector(uint16_t vector_address)
@@ -80,6 +289,8 @@ bool reload_rom(String_Builder *rom, const char *rom_path)
 
     reset6502();
     MEMORY[FPS_CONFIG] = DEFAULT_EMU_FPS;
+    reset_audio_channels();
+    soundchip_clock = 0;
 
     return true;
 }
@@ -108,6 +319,16 @@ int main(int argc, char **argv)
     SetTargetFPS(UI_FPS);
     SetExitKey(KEY_NULL);
 
+    reset_audio_channels();
+    generate_wave_tables();
+
+    InitAudioDevice();
+    SetAudioStreamBufferSizeDefault(AUDIO_BUFFER_SIZE);
+    AudioStream stream = LoadAudioStream(SAMPLERATE, 16, 1);
+    SetAudioStreamPan(stream, 0.0f); // center
+    PlayAudioStream(stream);
+
+    float soundchip_clock_accum = 0.0f;
 
     Texture canvas = LoadTextureFromImage((Image) {
         .data    = MEMORY + CANVAS,
@@ -163,6 +384,16 @@ int main(int argc, char **argv)
             float a = fmodf(global_timer, emu_delta_time);
             global_timer += GetFrameTime();
             float b = fmodf(global_timer, emu_delta_time);
+
+            update_audio_channels();
+            soundchip_clock_accum += GetFrameTime();
+            while (soundchip_clock_accum >= SOUNDCHIP_CLOCK_RATE) {
+                soundchip_clock++;
+                soundchip_clock_accum -= SOUNDCHIP_CLOCK_RATE;
+            }
+            MEMORY[SOUNDCLOCK]     = soundchip_clock & 0xFF;
+            MEMORY[SOUNDCLOCK + 1] = soundchip_clock >> 8;
+
             if (b < a) {
                 for (int c = 0; c < 128; ++c) {
                     MEMORY[KEYBOARD + c] = IsKeyDown(c);
@@ -189,6 +420,9 @@ int main(int argc, char **argv)
                 }
 
                 call_vector(read16(UPDATE_VECTOR));
+            }
+            if (IsAudioStreamProcessed(stream)) {
+                play_audio_channels(stream);
             }
         }
 
@@ -229,6 +463,8 @@ int main(int argc, char **argv)
         } EndDrawing();
     }
 
+    UnloadAudioStream(stream);
+    CloseAudioDevice();
     CloseWindow();
 
     return 0;
