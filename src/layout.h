@@ -10,3 +10,4 @@
 #define MOUSE_X       (MOUSE_BTN + 1)
 #define MOUSE_Y       (MOUSE_X + 1)
 #define SOUNDCHIP     0x3000
+#define SOUNDCLOCK    0x3020
