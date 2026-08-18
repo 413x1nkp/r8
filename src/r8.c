@@ -33,6 +33,14 @@ extern uint16_t pc;
 extern uint8_t sp, a, x, y, status;
 #define FLAG_INTERRUPT 0x04
 
+enum ADSRStage {
+    ADSR_NONE, // null stage to reset to after release
+    ADSR_ATTACK,
+    ADSR_DECAY,
+    ADSR_SUSTAIN,
+    ADSR_RELEASE,
+};
+
 struct AudioChannel {
     uint16_t freq;        // offset 0
 
@@ -70,6 +78,9 @@ struct AudioChannel {
     // internal, not exposed to 6502
     uint32_t phase_accum;
     uint16_t noise_lfsr;
+    bool gate_flipped;
+    enum ADSRStage stage;
+    float adsr_gain;
 };
 
 struct AudioChannel channels[4];
@@ -102,6 +113,22 @@ void load_rom_at(uint8_t *rom_bytes, size_t rom_count, uint16_t offset)
 int8_t triangle_wave[WAVE_TABLE_SIZE];
 int8_t sawtooth_wave[WAVE_TABLE_SIZE];
 
+// attack duration in seconds
+const float attack_envelope[16] = {
+    0.002f, 0.008f, 0.016f, 0.024f,
+    0.038f, 0.056f, 0.068f, 0.080f,
+    0.1f,   0.25f,  0.5f,   0.8f,
+    1.0f,   3.0f,   5.0f,   8.0f,
+};
+
+// decay & release duration in seconds
+const float dr_envelope[16] = {
+    0.006f, 0.024f, 0.048f, 0.072f,
+    0.114f, 0.168f, 0.204f, 0.240f,
+    0.3f,   0.75f,  1.5f,   2.4f,
+    3.0f,   9.0f,   15.0f,  24.0f,
+};
+
 void generate_wave_tables(void) {
     for (int i = 0; i < WAVE_TABLE_SIZE; ++i) {
         if (i < 128) triangle_wave[i] = (i * 2) - 127;
@@ -122,6 +149,57 @@ int16_t generate_sample(struct AudioChannel* ch) {
     ch->phase_accum += (ch->freq * (1ULL << 32)) / SAMPLERATE;
     uint8_t pos = (ch->phase_accum >> 24) & 0xFF;
 
+    uint32_t attack_samples  = attack_envelope[(ch->ad >> 4)] * SAMPLERATE;
+    uint32_t decay_samples   = dr_envelope[(ch->ad & 0x0F)] * SAMPLERATE;
+    uint32_t release_samples = dr_envelope[(ch->sr & 0x0F)] * SAMPLERATE;
+
+    // set sustain in increments of 1.0f / 15.0f
+    float sustain_level = (float)(ch->sr >> 4) / 0x0F;
+
+    float attack_inc  = 1.0f / attack_samples;
+    float decay_inc   = (1.0f - sustain_level) / (float)decay_samples;
+    float release_inc = sustain_level / (float)release_samples;
+
+    if (ch->gate_flipped) {
+        if (ch->control & 0x80) {
+            ch->adsr_gain = 0.0f;
+            ch->stage = ADSR_ATTACK;
+        } else {
+            ch->stage = ADSR_RELEASE;
+        }
+        ch->gate_flipped = false;
+    }
+
+    switch (ch->stage) {
+        case ADSR_NONE: {} break;
+
+        case ADSR_ATTACK: {
+            ch->adsr_gain += attack_inc;
+            if (ch->adsr_gain >= 1.0f) {
+                ch->adsr_gain = 1.0f;
+                ch->stage = ADSR_DECAY;
+            }
+        } break;
+
+        case ADSR_DECAY: {
+            ch->adsr_gain -= decay_inc;
+            if (ch->adsr_gain <= sustain_level) {
+                ch->adsr_gain = sustain_level;
+                ch->stage = ADSR_SUSTAIN;
+            }
+        } break;
+
+        case ADSR_SUSTAIN: {} break;
+
+        case ADSR_RELEASE: {
+            ch->adsr_gain -= release_inc;
+            if (ch->adsr_gain <= 0.0f) {
+                ch->adsr_gain = 0.0f;
+                ch->stage = ADSR_NONE;
+            }
+        } break;
+    }
+
     int8_t raw_sample = 0;
 
     // select instrument based on the lower 4 bits
@@ -140,7 +218,7 @@ int16_t generate_sample(struct AudioChannel* ch) {
         } break;
     }
 
-    return (raw_sample * ch->volume) / 0x0F;
+    return (raw_sample * ch->volume * ch->adsr_gain) / 0x0F;
 }
 
 void reset_audio_channels(void) {
@@ -164,19 +242,13 @@ void update_audio_channels(void) {
         channels[ch].sr          =  MEMORY[SOUNDCHIP + 8*ch + 4];
         channels[ch].pulse_width =  MEMORY[SOUNDCHIP + 8*ch + 5];
         channels[ch].volume      =  MEMORY[SOUNDCHIP + 8*ch + 6];
-        channels[ch].control     =  MEMORY[SOUNDCHIP + 8*ch + 7];
+        uint8_t new_control      =  MEMORY[SOUNDCHIP + 8*ch + 7];
 
-        // do ADSR here
+        if ((channels[ch].control & 0x80) != (new_control & 0x80)) {
+            channels[ch].gate_flipped = true;
+        }
 
-        MEMORY[SOUNDCHIP + 8*ch + 0] = channels[ch].freq & 0xFF;
-        MEMORY[SOUNDCHIP + 8*ch + 1] = channels[ch].freq >> 8;
-
-        MEMORY[SOUNDCHIP + 8*ch + 2] = channels[ch].unused;
-        MEMORY[SOUNDCHIP + 8*ch + 3] = channels[ch].ad;
-        MEMORY[SOUNDCHIP + 8*ch + 4] = channels[ch].sr;
-        MEMORY[SOUNDCHIP + 8*ch + 5] = channels[ch].pulse_width;
-        MEMORY[SOUNDCHIP + 8*ch + 6] = channels[ch].volume;
-        MEMORY[SOUNDCHIP + 8*ch + 7] = channels[ch].control;
+        channels[ch].control = new_control;
     }
 }
 
@@ -186,10 +258,7 @@ void play_audio_channels(AudioStream stream) {
         int16_t mix_sample = 0;
 
         for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
-            // check GATE bit
-            if (channels[ch].control & 0x80) {
-                mix_sample += generate_sample(&channels[ch]);
-            }
+            mix_sample += generate_sample(&channels[ch]);
         }
         pcm_buffer[i] = mix_sample;
     }
