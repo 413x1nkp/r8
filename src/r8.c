@@ -399,8 +399,8 @@ int main(int argc, char **argv)
                 soundchip_clock++;
                 soundchip_clock_accum -= SOUNDCHIP_CLOCK_RATE;
             }
-            MEMORY[SOUNDCHIP + 4*8]     = soundchip_clock >> 8;
-            MEMORY[SOUNDCHIP + 4*8 + 1] = soundchip_clock & 0xFF;
+            MEMORY[SOUNDCHIP + 4*8]     = soundchip_clock & 0xFF;
+            MEMORY[SOUNDCHIP + 4*8 + 1] = soundchip_clock >> 8;
 
             if (b < a) {
                 for (int c = 0; c < 128; ++c) {
