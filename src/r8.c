@@ -13,8 +13,11 @@
 #include "layout.h"
 #define MAX_VECTOR_STEPS (10*1000*1000)
 #define BACKGROUND_COLOR 0x181818FF
+
 #define SAMPLERATE 44100
-#define DURATION_TICK_SPEED 10.0f
+#define AUDIO_BUFFER_SIZE 2048
+#define WAVE_TABLE_SIZE 256
+#define SOUNDCHIP_CLOCK_RATE 1.0f / 100.0f
 
 // 0x1000 .. 0x2000
 
@@ -33,26 +36,28 @@ extern uint8_t sp, a, x, y, status;
 struct AudioChannel {
     uint16_t freq;        // offset 0
 
-    // duration of a note in ticks
-    uint8_t duration;     // offset 2
+    // extra byte for nicer alignment
+    // currently does nothing
+    // TODO: maybe use for panning
+    uint8_t unused;      // offset 2
 
     // attack and decay control
     //   0000      0000
     // ^attack^   ^decay^
-    uint8_t ad;           // offset 3
+    uint8_t ad;          // offset 3
 
     // sustain and release control
     //   0000        0000
     // ^sustain^   ^release^
-    uint8_t sr;           // offset 4
+    uint8_t sr;          // offset 4
 
     uint8_t pulse_width; // offset 5
 
-    uint8_t volume; // offset 6
+    uint8_t volume;      // offset 6
 
     // channel control
     // BITS
-    // 0 -- reset the fractional part of internal_duration by setting it to (float)duration
+    // 0 -- GATE (1 means play, 0 means stop)
     // 0
     // 0
     // 0
@@ -60,15 +65,15 @@ struct AudioChannel {
     // 0   | waveform
     // 0   | control
     // 0 --+
-    uint8_t control; // offset 7
+    uint8_t control;     // offset 7
 
     // internal, not exposed to 6502
     uint32_t phase_accum;
     uint16_t noise_lfsr;
-    float internal_duration;
 };
 
 struct AudioChannel channels[4];
+uint16_t soundchip_clock = 0;
 
 uint8_t read6502(uint16_t address)
 {
@@ -93,9 +98,6 @@ void load_rom_at(uint8_t *rom_bytes, size_t rom_count, uint16_t offset)
         MEMORY[i + offset] = x;
     }
 }
-
-#define AUDIO_BUFFER_SIZE 2048
-#define WAVE_TABLE_SIZE 256
 
 int8_t triangle_wave[WAVE_TABLE_SIZE];
 int8_t sawtooth_wave[WAVE_TABLE_SIZE];
@@ -156,34 +158,20 @@ void update_audio_channels(void) {
     // this might have to suffice for now
     for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
         // combine the low and high byte
-        channels[ch].freq        = (MEMORY[SOUNDCHIP + 8*ch] << 8) | (MEMORY[SOUNDCHIP + 8*ch + 1]);
-        channels[ch].duration    =  MEMORY[SOUNDCHIP + 8*ch + 2];
+        channels[ch].freq        = (MEMORY[SOUNDCHIP + 8*ch + 1] << 8) | (MEMORY[SOUNDCHIP + 8*ch]);
+        channels[ch].unused      =  MEMORY[SOUNDCHIP + 8*ch + 2];
         channels[ch].ad          =  MEMORY[SOUNDCHIP + 8*ch + 3];
         channels[ch].sr          =  MEMORY[SOUNDCHIP + 8*ch + 4];
         channels[ch].pulse_width =  MEMORY[SOUNDCHIP + 8*ch + 5];
         channels[ch].volume      =  MEMORY[SOUNDCHIP + 8*ch + 6];
         channels[ch].control     =  MEMORY[SOUNDCHIP + 8*ch + 7];
 
-        // check 'reset inner clock' bit
-        if (channels[ch].control & 0x80) {
-            channels[ch].control &= 0x7F;
-            channels[ch].internal_duration = (float)channels[ch].duration;
-        }
+        // do ADSR here
 
-        if (channels[ch].duration > 0) {
-            channels[ch].internal_duration -= GetFrameTime() * DURATION_TICK_SPEED;
-            if (channels[ch].internal_duration <= 0.0f) {
-                channels[ch].internal_duration = 0.0f;
-                channels[ch].duration = 0;
-                channels[ch].volume = 0;
-            } else {
-                channels[ch].duration = ceilf(channels[ch].internal_duration);
-            }
-        }
-        MEMORY[SOUNDCHIP + 8*ch]     = channels[ch].freq >> 8;
-        MEMORY[SOUNDCHIP + 8*ch + 1] = channels[ch].freq & 0xFF;
+        MEMORY[SOUNDCHIP + 8*ch + 0] = channels[ch].freq & 0xFF;
+        MEMORY[SOUNDCHIP + 8*ch + 1] = channels[ch].freq >> 8;
 
-        MEMORY[SOUNDCHIP + 8*ch + 2] = channels[ch].duration;
+        MEMORY[SOUNDCHIP + 8*ch + 2] = channels[ch].unused;
         MEMORY[SOUNDCHIP + 8*ch + 3] = channels[ch].ad;
         MEMORY[SOUNDCHIP + 8*ch + 4] = channels[ch].sr;
         MEMORY[SOUNDCHIP + 8*ch + 5] = channels[ch].pulse_width;
@@ -198,7 +186,8 @@ void play_audio_channels(AudioStream stream) {
         int16_t mix_sample = 0;
 
         for (size_t ch = 0; ch < (sizeof(channels) / sizeof(channels[0])); ++ch) {
-            if (channels[ch].duration > 0) {
+            // check GATE bit
+            if (channels[ch].control & 0x80) {
                 mix_sample += generate_sample(&channels[ch]);
             }
         }
@@ -237,6 +226,7 @@ bool reload_rom(String_Builder *rom, const char *rom_path)
     reset6502();
     MEMORY[FPS_CONFIG] = DEFAULT_EMU_FPS;
     reset_audio_channels();
+    soundchip_clock = 0;
 
     return true;
 }
@@ -273,6 +263,9 @@ int main(int argc, char **argv)
     AudioStream stream = LoadAudioStream(SAMPLERATE, 16, 1);
     SetAudioStreamPan(stream, 0.0f); // center
     PlayAudioStream(stream);
+
+    // TODO: create helper functions for resetting and updating the clock
+    float soundchip_clock_accum = 0.0f;
 
     Texture canvas = LoadTextureFromImage((Image) {
         .data    = MEMORY + CANVAS,
@@ -330,7 +323,16 @@ int main(int argc, char **argv)
             // as there's loss of precision over time otherwise
             global_timer += GetFrameTime();
             float b = fmodf(global_timer, emu_delta_time);
+
             update_audio_channels();
+            soundchip_clock_accum += GetFrameTime();
+            while (soundchip_clock_accum >= SOUNDCHIP_CLOCK_RATE) {
+                soundchip_clock++;
+                soundchip_clock_accum -= SOUNDCHIP_CLOCK_RATE;
+            }
+            MEMORY[SOUNDCHIP + 4*8]     = soundchip_clock >> 8;
+            MEMORY[SOUNDCHIP + 4*8 + 1] = soundchip_clock & 0xFF;
+
             if (b < a) {
                 for (int c = 0; c < 128; ++c) {
                     MEMORY[KEYBOARD + c] = IsKeyDown(c);
